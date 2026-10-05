@@ -71,6 +71,9 @@ pub struct TaskControlBlockInner {
 
     /// Program break
     pub program_brk: usize,
+
+    /// Stride scheduling priority (>= 2, default 16)
+    pub priority: usize,
 }
 
 impl TaskControlBlockInner {
@@ -135,6 +138,7 @@ impl TaskControlBlock {
                     ],
                     heap_bottom: user_sp,
                     program_brk: user_sp,
+                    priority: 16,
                 })
             },
         };
@@ -216,6 +220,7 @@ impl TaskControlBlock {
                     fd_table: new_fd_table,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
+                    priority: parent_inner.priority,
                 })
             },
         });
@@ -260,6 +265,26 @@ impl TaskControlBlock {
         } else {
             None
         }
+    }
+    /// Set the stride scheduling priority of this task.
+    ///
+    /// Returns the new priority on success, or -1 when `prio < 2`.
+    pub fn set_priority(&self, prio: isize) -> isize {
+        if prio < 2 {
+            return -1;
+        }
+        let mut inner = self.inner_exclusive_access();
+        inner.priority = prio as usize;
+        prio
+    }
+    /// Create a child process that directly runs the app in `elf_data`,
+    /// combining fork and exec without copying the parent address space.
+    pub fn spawn(self: &Arc<Self>, elf_data: &[u8]) -> Arc<Self> {
+        let mut parent_inner = self.inner_exclusive_access();
+        let task = Arc::new(TaskControlBlock::new(elf_data));
+        task.inner_exclusive_access().parent = Some(Arc::downgrade(self));
+        parent_inner.children.push(task.clone());
+        task
     }
 }
 
