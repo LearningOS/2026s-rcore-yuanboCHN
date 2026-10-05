@@ -1,5 +1,6 @@
 //!Implementation of [`TaskManager`]
 use super::TaskControlBlock;
+use crate::config::BIG_STRIDE;
 use crate::sync::UPSafeCell;
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
@@ -9,7 +10,8 @@ pub struct TaskManager {
     ready_queue: VecDeque<Arc<TaskControlBlock>>,
 }
 
-/// A simple FIFO scheduler.
+/// A stride scheduler: always pick the task with the smallest pass value,
+/// then add its stride back to its pass.
 impl TaskManager {
     ///Creat an empty TaskManager
     pub fn new() -> Self {
@@ -21,9 +23,27 @@ impl TaskManager {
     pub fn add(&mut self, task: Arc<TaskControlBlock>) {
         self.ready_queue.push_back(task);
     }
-    /// Take a process out of the ready queue
+    /// Take the process with the minimal pass out of the ready queue.
     pub fn fetch(&mut self) -> Option<Arc<TaskControlBlock>> {
-        self.ready_queue.pop_front()
+        if self.ready_queue.is_empty() {
+            return None;
+        }
+        // find the task with the smallest pass
+        let mut idx_min = 0;
+        let mut min_pass = usize::MAX;
+        for (i, task) in self.ready_queue.iter().enumerate() {
+            let pass = task.inner_exclusive_access().pass;
+            if pass < min_pass {
+                min_pass = pass;
+                idx_min = i;
+            }
+        }
+        let task = self.ready_queue.remove(idx_min).unwrap();
+        // advance the selected task's pass by its stride
+        let mut inner = task.inner_exclusive_access();
+        inner.pass += BIG_STRIDE / inner.priority;
+        drop(inner);
+        Some(task)
     }
 }
 

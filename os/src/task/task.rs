@@ -68,6 +68,12 @@ pub struct TaskControlBlockInner {
 
     /// Program break
     pub program_brk: usize,
+
+    /// Stride scheduling pass value (accumulated)
+    pub pass: usize,
+
+    /// Stride scheduling priority (>= 2, default 16)
+    pub priority: usize,
 }
 
 impl TaskControlBlockInner {
@@ -118,6 +124,8 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: user_sp,
                     program_brk: user_sp,
+                    pass: 0,
+                    priority: 16,
                 })
             },
         };
@@ -191,6 +199,8 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
+                    pass: 0,
+                    priority: parent_inner.priority,
                 })
             },
         });
@@ -235,6 +245,30 @@ impl TaskControlBlock {
         } else {
             None
         }
+    }
+    /// Set the stride scheduling priority of this task.
+    ///
+    /// Returns the new priority on success, or -1 when `prio < 2`.
+    pub fn set_priority(&self, prio: isize) -> isize {
+        if prio < 2 {
+            return -1;
+        }
+        let mut inner = self.inner_exclusive_access();
+        inner.priority = prio as usize;
+        prio
+    }
+    /// Create a child process that directly runs the app in `elf_data`,
+    /// combining fork and exec without copying the parent address space.
+    pub fn spawn(self: &Arc<Self>, elf_data: &[u8]) -> Arc<Self> {
+        // ---- access parent PCB exclusively
+        let mut parent_inner = self.inner_exclusive_access();
+        let task = Arc::new(TaskControlBlock::new(elf_data));
+        // set parent to self
+        task.inner_exclusive_access().parent = Some(Arc::downgrade(self));
+        // add child to parent's children list
+        parent_inner.children.push(task.clone());
+        task
+        // ---- release parent PCB automatically
     }
 }
 
