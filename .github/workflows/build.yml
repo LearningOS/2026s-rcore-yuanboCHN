@@ -1,0 +1,29 @@
+name: Jobs
+
+on:
+  push:
+    branches: [ch3, ch4, ch5, ch6, ch8]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  rust_toolchain: nightly
+
+jobs:
+  build-doc:
+    if: github.repository_owner == 'LearningOS' && github.repository != 'LearningOS/2026s-oscamp-professional-2026s-rcore-rCore-Tutorial-Code' && !startsWith(github.event.repository.name, 'preparing-') && github.event_name != 'pull_request' && vars.STUDENT_GITHUB != '' && github.actor == vars.STUDENT_GITHUB && contains(fromJSON('["ch3","ch4","ch5","ch6","ch8"]'), github.ref_name) && (github.repository == 'LearningOS/rCore-Tutorial-Code')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build doc
+        run: |
+          git clone https://github.com/LearningOS/rCore-Tutorial-Test.git user
+          cd os
+          make
+          cargo doc --no-deps --verbose
+      - name: Push to gh-pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./os/target/riscv64gc-unknown-none-elf/doc
+          destination_dir: ${{ github.ref_name }}
