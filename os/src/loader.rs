@@ -48,6 +48,15 @@ impl UserStack {
     }
 }
 
+/// Get the address of the first user stack (start of the whole array).
+///
+/// All user stacks are laid out contiguously in the static array
+/// `USER_STACK`, so the valid user-stack address region is
+/// `[user_stack_addr(), user_stack_addr() + MAX_APP_NUM * USER_STACK_SIZE)`.
+pub fn user_stack_addr() -> usize {
+    USER_STACK.as_ptr() as usize
+}
+
 /// Get base address of app i.
 fn get_base_i(app_id: usize) -> usize {
     APP_BASE_ADDRESS + app_id * APP_SIZE_LIMIT
