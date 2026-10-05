@@ -1,6 +1,6 @@
 //! Types related to task management
 use super::TaskContext;
-use crate::config::TRAP_CONTEXT_BASE;
+use crate::config::{MAX_SYSCALL_NUM, TRAP_CONTEXT_BASE};
 use crate::mm::{
     kernel_stack_position, MapPermission, MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE,
 };
@@ -28,6 +28,9 @@ pub struct TaskControlBlock {
 
     /// Program break
     pub program_brk: usize,
+
+    /// Number of times each syscall has been called by this task
+    pub syscall_times: [u32; MAX_SYSCALL_NUM],
 }
 
 impl TaskControlBlock {
@@ -63,6 +66,7 @@ impl TaskControlBlock {
             base_size: user_sp,
             heap_bottom: user_sp,
             program_brk: user_sp,
+            syscall_times: [0; MAX_SYSCALL_NUM],
         };
         // prepare TrapContext in user space
         let trap_cx = task_control_block.get_trap_cx();
@@ -95,6 +99,45 @@ impl TaskControlBlock {
         } else {
             None
         }
+    }
+    /// mmap: map `[start, start + len)` with the permission described by `port`.
+    pub fn mmap(&mut self, start: usize, len: usize, port: usize) -> isize {
+        // map the three low bits of `port` to R/W/X
+        let mut map_perm = MapPermission::U;
+        if port & 1 != 0 {
+            map_perm |= MapPermission::R;
+        }
+        if port & 2 != 0 {
+            map_perm |= MapPermission::W;
+        }
+        if port & 4 != 0 {
+            map_perm |= MapPermission::X;
+        }
+        let start_va = VirtAddr(start);
+        let end_va = VirtAddr(start + len);
+        if self.memory_set.mmap_area(start_va, end_va, map_perm) {
+            0
+        } else {
+            -1
+        }
+    }
+    /// munmap: unmap `[start, start + len)`.
+    pub fn munmap(&mut self, start: usize, len: usize) -> isize {
+        let start_va = VirtAddr(start);
+        let end_va = VirtAddr(start + len);
+        if self.memory_set.munmap_area(start_va, end_va) {
+            0
+        } else {
+            -1
+        }
+    }
+    /// Read a single byte from `addr` of this task's address space.
+    pub fn read_byte_from_user(&self, addr: usize) -> Option<u8> {
+        self.memory_set.read_byte(VirtAddr(addr))
+    }
+    /// Write a single byte to `addr` of this task's address space.
+    pub fn write_byte_to_user(&self, addr: usize, data: u8) -> bool {
+        self.memory_set.write_byte(VirtAddr(addr), data)
     }
 }
 

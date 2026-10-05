@@ -133,6 +133,48 @@ impl TaskManager {
         inner.tasks[cur].change_program_brk(size)
     }
 
+    /// Increase the syscall call count of the current task by one.
+    pub fn inc_syscall_current(&self, syscall_id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let cur = inner.current_task;
+        inner.tasks[cur].syscall_times[syscall_id] += 1;
+    }
+
+    /// Read the call count of `syscall_id` for the current task.
+    pub fn get_current_syscall_count(&self, syscall_id: usize) -> usize {
+        let inner = self.inner.exclusive_access();
+        let cur = inner.current_task;
+        inner.tasks[cur].syscall_times[syscall_id] as usize
+    }
+
+    /// Perform mmap on the current task's address space.
+    pub fn current_mmap(&self, start: usize, len: usize, port: usize) -> isize {
+        let mut inner = self.inner.exclusive_access();
+        let cur = inner.current_task;
+        inner.tasks[cur].mmap(start, len, port)
+    }
+
+    /// Perform munmap on the current task's address space.
+    pub fn current_munmap(&self, start: usize, len: usize) -> isize {
+        let mut inner = self.inner.exclusive_access();
+        let cur = inner.current_task;
+        inner.tasks[cur].munmap(start, len)
+    }
+
+    /// Read one byte from the current task's address space.
+    pub fn current_read_byte(&self, addr: usize) -> Option<u8> {
+        let inner = self.inner.exclusive_access();
+        let cur = inner.current_task;
+        inner.tasks[cur].read_byte_from_user(addr)
+    }
+
+    /// Write one byte to the current task's address space.
+    pub fn current_write_byte(&self, addr: usize, data: u8) -> bool {
+        let inner = self.inner.exclusive_access();
+        let cur = inner.current_task;
+        inner.tasks[cur].write_byte_to_user(addr, data)
+    }
+
     /// Switch current `Running` task to the task we have found,
     /// or there is no `Ready` task and we can exit with all applications completed
     fn run_next_task(&self) {
@@ -201,4 +243,34 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 /// Change the current 'Running' task's program break
 pub fn change_program_brk(size: i32) -> Option<usize> {
     TASK_MANAGER.change_current_program_brk(size)
+}
+
+/// Increase the syscall call count of the current task by one.
+pub fn inc_syscall(syscall_id: usize) {
+    TASK_MANAGER.inc_syscall_current(syscall_id);
+}
+
+/// Read the call count of `syscall_id` for the current task.
+pub fn get_syscall_count(syscall_id: usize) -> usize {
+    TASK_MANAGER.get_current_syscall_count(syscall_id)
+}
+
+/// Perform mmap on the current task's address space.
+pub fn mmap(start: usize, len: usize, port: usize) -> isize {
+    TASK_MANAGER.current_mmap(start, len, port)
+}
+
+/// Perform munmap on the current task's address space.
+pub fn munmap(start: usize, len: usize) -> isize {
+    TASK_MANAGER.current_munmap(start, len)
+}
+
+/// Read one byte from the current task's address space.
+pub fn read_byte_from_user(addr: usize) -> Option<u8> {
+    TASK_MANAGER.current_read_byte(addr)
+}
+
+/// Write one byte to the current task's address space.
+pub fn write_byte_to_user(addr: usize, data: u8) -> bool {
+    TASK_MANAGER.current_write_byte(addr, data)
 }

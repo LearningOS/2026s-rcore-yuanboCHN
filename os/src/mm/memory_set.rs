@@ -63,6 +63,97 @@ impl MemorySet {
             None,
         );
     }
+    /// Return `true` if no existing area overlaps the page range
+    /// `[start_va, end_va)`.
+    pub fn is_area_free(&self, start_va: VirtAddr, end_va: VirtAddr) -> bool {
+        let start_vpn = start_va.floor();
+        let end_vpn = end_va.ceil();
+        !self.areas.iter().any(|a| {
+            a.vpn_range.get_start() < end_vpn && a.vpn_range.get_end() > start_vpn
+        })
+    }
+    /// Map a new user area `[start_va, end_va)` with `permission`.
+    ///
+    /// Returns `false` if the range overlaps an existing area.
+    pub fn mmap_area(
+        &mut self,
+        start_va: VirtAddr,
+        end_va: VirtAddr,
+        permission: MapPermission,
+    ) -> bool {
+        if !self.is_area_free(start_va, end_va) {
+            return false;
+        }
+        self.insert_framed_area(start_va, end_va, permission);
+        true
+    }
+    /// Unmap the page range `[start_va, end_va)`.
+    ///
+    /// Frames are freed and page-table entries invalidated. Returns `false`
+    /// if the range was not (fully) mapped beforehand.
+    pub fn munmap_area(&mut self, start_va: VirtAddr, end_va: VirtAddr) -> bool {
+        let start_vpn = start_va.floor();
+        let end_vpn = end_va.ceil();
+        let mut all_mapped = true;
+        for vpn in VPNRange::new(start_vpn, end_vpn) {
+            let mut contained = false;
+            for area in self.areas.iter_mut() {
+                if area.vpn_range.get_start() <= vpn && vpn < area.vpn_range.get_end() {
+                    area.unmap_one(&mut self.page_table, vpn);
+                    contained = true;
+                    break;
+                }
+            }
+            if !contained {
+                all_mapped = false;
+            }
+        }
+        // Drop areas whose whole range has been unmapped, and shrink areas that
+        // were partially unmapped from the front or the back.
+        let mut new_areas: Vec<MapArea> = Vec::new();
+        for area in self.areas.drain(..) {
+            let (lo, hi) = (area.vpn_range.get_start(), area.vpn_range.get_end());
+            if lo >= start_vpn && hi <= end_vpn {
+                // fully covered: drop entirely (frames already freed)
+            } else {
+                new_areas.push(area);
+            }
+        }
+        self.areas = new_areas;
+        all_mapped
+    }
+    /// Read a single byte from a user virtual address.
+    ///
+    /// Returns `Some(v)` when the address is mapped and readable, otherwise
+    /// `None`.
+    pub fn read_byte(&self, va: VirtAddr) -> Option<u8> {
+        let vpn = va.floor();
+        let pte = self.page_table.translate(vpn)?;
+        if !pte.is_valid() || !pte.readable() {
+            return None;
+        }
+        let ppn = pte.ppn();
+        let offset = va.page_offset();
+        Some(ppn.get_bytes_array()[offset])
+    }
+    /// Write a single byte to a user virtual address.
+    ///
+    /// Returns `true` when the address is mapped and writable, otherwise
+    /// `false`.
+    pub fn write_byte(&self, va: VirtAddr, data: u8) -> bool {
+        let vpn = va.floor();
+        let pte = match self.page_table.translate(vpn) {
+            Some(pte) => pte,
+            None => return false,
+        };
+        if !pte.is_valid() || !pte.writable() {
+            return false;
+        }
+        let ppn = pte.ppn();
+        let offset = va.page_offset();
+        ppn.get_bytes_array()[offset] = data;
+        true
+    }
     fn push(&mut self, mut map_area: MapArea, data: Option<&[u8]>) {
         map_area.map(&mut self.page_table);
         if let Some(data) = data {
