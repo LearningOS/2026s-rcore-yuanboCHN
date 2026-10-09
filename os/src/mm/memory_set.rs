@@ -69,6 +69,59 @@ impl MemorySet {
             None,
         );
     }
+    /// Return `true` if no existing area overlaps `[start_va, end_va)`.
+    pub fn is_area_free(&self, start_va: VirtAddr, end_va: VirtAddr) -> bool {
+        let start_vpn = start_va.floor();
+        let end_vpn = end_va.ceil();
+        !self.areas.iter().any(|a| {
+            a.vpn_range.get_start() < end_vpn && a.vpn_range.get_end() > start_vpn
+        })
+    }
+    /// Map a new user area `[start_va, end_va)` with `permission`.
+    ///
+    /// Returns `false` if the range overlaps an existing area.
+    pub fn mmap_area(
+        &mut self,
+        start_va: VirtAddr,
+        end_va: VirtAddr,
+        permission: MapPermission,
+    ) -> bool {
+        if !self.is_area_free(start_va, end_va) {
+            return false;
+        }
+        self.insert_framed_area(start_va, end_va, permission);
+        true
+    }
+    /// Unmap the page range `[start_va, end_va)`.
+    pub fn munmap_area(&mut self, start_va: VirtAddr, end_va: VirtAddr) -> bool {
+        let start_vpn = start_va.floor();
+        let end_vpn = end_va.ceil();
+        let mut all_mapped = true;
+        for vpn in VPNRange::new(start_vpn, end_vpn) {
+            let mut contained = false;
+            for area in self.areas.iter_mut() {
+                if area.vpn_range.get_start() <= vpn && vpn < area.vpn_range.get_end() {
+                    area.unmap_one(&mut self.page_table, vpn);
+                    contained = true;
+                    break;
+                }
+            }
+            if !contained {
+                all_mapped = false;
+            }
+        }
+        let mut new_areas: Vec<MapArea> = Vec::new();
+        for area in self.areas.drain(..) {
+            let (lo, hi) = (area.vpn_range.get_start(), area.vpn_range.get_end());
+            if lo >= start_vpn && hi <= end_vpn {
+                // fully covered: drop entirely (frames already freed)
+            } else {
+                new_areas.push(area);
+            }
+        }
+        self.areas = new_areas;
+        all_mapped
+    }
     /// remove a area
     pub fn remove_area_with_start_vpn(&mut self, start_vpn: VirtPageNum) {
         if let Some((idx, area)) = self

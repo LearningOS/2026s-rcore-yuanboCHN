@@ -1,4 +1,5 @@
 use super::File;
+use super::{Stat, StatMode};
 use crate::drivers::BLOCK_DEVICE;
 use crate::mm::UserBuffer;
 use crate::sync::UPSafeCell;
@@ -46,6 +47,21 @@ impl OSInode {
             v.extend_from_slice(&buffer[..len]);
         }
         v
+    }
+    /// Return the [`Stat`] of the underlying inode.
+    pub fn fstat(&self) -> Stat {
+        let inner = self.inner.exclusive_access();
+        let inode = &inner.inode;
+        let mut stat = Stat::new();
+        stat.dev = 0;
+        stat.ino = inode.inode_id() as u64;
+        stat.mode = if inode.is_dir() {
+            StatMode::DIR
+        } else {
+            StatMode::FILE
+        };
+        stat.nlink = inode.nlink();
+        stat
     }
 }
 
@@ -120,6 +136,30 @@ pub fn open_file(name: &str, flags: OpenFlags) -> Option<Arc<OSInode>> {
     }
 }
 
+/// Create a hard link `new_name` under the root directory pointing to the
+/// inode named `old_name`.
+pub fn linkat(old_name: &str, new_name: &str) -> isize {
+    match ROOT_INODE.find(old_name) {
+        Some(old_inode) => {
+            if ROOT_INODE.link(new_name, &old_inode).is_some() {
+                0
+            } else {
+                -1
+            }
+        }
+        None => -1,
+    }
+}
+
+/// Remove the directory entry `name` under the root directory.
+pub fn unlinkat(name: &str) -> isize {
+    if ROOT_INODE.unlink(name).is_some() {
+        0
+    } else {
+        -1
+    }
+}
+
 impl File for OSInode {
     /// file readable?
     fn readable(&self) -> bool {
@@ -156,5 +196,8 @@ impl File for OSInode {
             total_write_size += write_size;
         }
         total_write_size
+    }
+    fn fstat(&self) -> Option<Stat> {
+        Some(self.fstat())
     }
 }
