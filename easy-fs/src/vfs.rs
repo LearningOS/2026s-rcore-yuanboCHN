@@ -197,4 +197,106 @@ impl Inode {
         });
         block_cache_sync_all();
     }
+    /// Get the inode id of this inode.
+    pub fn inode_id(&self) -> u32 {
+        self.fs.lock().get_inode_id(self.block_id, self.block_offset)
+    }
+    /// Get the number of hard links pointing to this inode.
+    pub fn nlink(&self) -> u32 {
+        self.read_disk_inode(|disk_inode| disk_inode.nlink)
+    }
+    /// Whether this inode is a directory.
+    pub fn is_dir(&self) -> bool {
+        self.read_disk_inode(|disk_inode| disk_inode.is_dir())
+    }
+    /// Create a hard link `name` under this directory pointing to `old_inode`.
+    pub fn link(&self, name: &str, old_inode: &Arc<Inode>) -> Option<Arc<Inode>> {
+        let mut fs = self.fs.lock();
+        // assert it is a directory
+        assert!(self.read_disk_inode(|d| d.is_dir()));
+        // the name must not exist yet
+        if self.read_disk_inode(|d| self.find_inode_id(name, d)).is_some() {
+            return None;
+        }
+        let old_inode_id = fs.get_inode_id(old_inode.block_id, old_inode.block_offset);
+        // increase nlink of the target inode
+        old_inode.modify_disk_inode(|disk_inode| {
+            disk_inode.nlink += 1;
+        });
+        // append a new directory entry to this directory
+        self.modify_disk_inode(|root_inode| {
+            let file_count = (root_inode.size as usize) / DIRENT_SZ;
+            let new_size = (file_count + 1) * DIRENT_SZ;
+            self.increase_size(new_size as u32, root_inode, &mut fs);
+            let dirent = DirEntry::new(name, old_inode_id);
+            root_inode.write_at(
+                file_count * DIRENT_SZ,
+                dirent.as_bytes(),
+                &self.block_device,
+            );
+        });
+        block_cache_sync_all();
+        let (block_id, block_offset) = fs.get_disk_inode_pos(old_inode_id);
+        Some(Arc::new(Self::new(
+            block_id,
+            block_offset,
+            self.fs.clone(),
+            self.block_device.clone(),
+        )))
+    }
+    /// Remove the directory entry `name` under this directory and decrement the
+    /// target inode's link count.
+    pub fn unlink(&self, name: &str) -> Option<Arc<Inode>> {
+        let fs = self.fs.lock();
+        assert!(self.read_disk_inode(|d| d.is_dir()));
+        // locate the target inode id
+        let target_id = self.read_disk_inode(|d| self.find_inode_id(name, d))?;
+        // decrement the target inode's nlink
+        {
+            let (block_id, block_offset) = fs.get_disk_inode_pos(target_id);
+            let target_inode = Self::new(
+                block_id,
+                block_offset,
+                self.fs.clone(),
+                self.block_device.clone(),
+            );
+            target_inode.modify_disk_inode(|disk_inode| {
+                if disk_inode.nlink > 0 {
+                    disk_inode.nlink -= 1;
+                }
+            });
+        }
+        // remove the directory entry by overwriting it with an empty entry
+        self.modify_disk_inode(|root_inode| {
+            let file_count = (root_inode.size as usize) / DIRENT_SZ;
+            let mut dirent = DirEntry::empty();
+            for i in 0..file_count {
+                assert_eq!(
+                    root_inode.read_at(
+                        DIRENT_SZ * i,
+                        dirent.as_bytes_mut(),
+                        &self.block_device,
+                    ),
+                    DIRENT_SZ,
+                );
+                if dirent.name() == name {
+                    let empty = DirEntry::empty();
+                    root_inode.write_at(
+                        DIRENT_SZ * i,
+                        empty.as_bytes(),
+                        &self.block_device,
+                    );
+                    break;
+                }
+            }
+        });
+        block_cache_sync_all();
+        let (block_id, block_offset) = fs.get_disk_inode_pos(target_id);
+        Some(Arc::new(Self::new(
+            block_id,
+            block_offset,
+            self.fs.clone(),
+            self.block_device.clone(),
+        )))
+    }
 }

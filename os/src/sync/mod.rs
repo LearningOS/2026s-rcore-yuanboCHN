@@ -153,10 +153,6 @@ impl DeadlockDetector {
         let safe = banker_is_safe(&self.allocation, &self.need, &self.total);
         if !safe {
             self.need[tid][sem_id] -= 1;
-            crate::println!(
-                "[dd] DENY tid={} sem={} total={:?} alloc={:?} need={:?}",
-                tid, sem_id, self.total, self.allocation, self.need
-            );
             return false;
         }
         true
